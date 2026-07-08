@@ -8,8 +8,25 @@ convención definitiva en las plantillas Twig de Drupal.
 
 `cc-text` genera el `<h1>`–`<h6>` (según su prop `fontsize`) **dentro de su Shadow DOM**.
 Un evaluador SEO que mira el HTML (view-source) o que no atraviesa el Shadow DOM reporta
-**"No H1 tag found"** aunque visualmente el heading se vea. Eso es lo que confirmó la primera
-prueba. Estas 3 variantes comparan las salidas posibles.
+**"No H1 tag found"** aunque visualmente el heading se vea.
+
+### Hallazgo importante (slot-heading.html "correcta" pero el evaluador falla)
+
+Al verificar `slot-heading.html` con Backlinko (tools.backlinko.com, powered by Semrush)
+el evaluador reporta "No H1" **aunque el `<h1>` SÍ está en el HTML crudo y en el DOM
+renderizado** (verificado con curl, regex, Chrome `--dump-dom` y `querySelectorAll` → todos lo ven).
+
+Dos anomalías distinguen ese `<h1>` de uno "normal", y por eso se añadieron 2 páginas de control:
+1. El `<h1>` está **envuelto en un custom element** (`<cc-text>`), que un parser SEO ingenuo
+   puede saltarse si no reconoce el tag.
+2. `cc-text` pone `role="none"` en su host (para accesibilidad). Por spec ARIA eso NO debería
+   podar el heading descendiente, pero **algunos evaluadores podan todo el subárbol**.
+
+Las páginas `control.html` y `slot-no-role.html` aíslan cada variable. Evalúalas para saber
+cuál rompe a Backlinko:
+- Si `control.html` (headings desnudos) también falla → el problema es el evaluador (caché/JS).
+- Si `control.html` pasa pero `slot-heading.html` falla → el envoltorio `<cc-text>` es el culpable.
+- Si `slot-no-role.html` pasa pero `slot-heading.html` falla → el `role="none"` es el culpable.
 
 ## Las 3 variantes (misma URL base, 3 archivos)
 
