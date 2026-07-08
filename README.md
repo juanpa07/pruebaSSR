@@ -1,121 +1,91 @@
-# Prueba SSR / SEO — `cc-text` (Shadow DOM vs Light DOM)
+# Prueba SSR / SEO — `cc-text`
 
-Experimento para responder una pregunta concreta antes de escribir las plantillas Twig de Drupal:
+Comparación de **3 estrategias** de render para el web component `cc-text`, para decidir cuál
+hace que un evaluador SEO detecte correctamente los headings (`<h1>`–`<h6>`) antes de fijar la
+convención definitiva en las plantillas Twig de Drupal.
 
-> Cuando uso el web component `cc-text` así:
-> ```html
-> <cc-text color="graphite-deep-main" fontsize="h2" ...>This is a Title</cc-text>
-> ```
-> …¿un evaluador de SEO detecta que hay un elemento `<h2>` en la página?
-> ¿O me toca escribir el heading explícito dentro del slot?
-> ```html
-> <cc-text color="graphite-deep-main" fontsize="h2" ...><h2>This is a Title</h2></cc-text>
-> ```
+## El problema
 
-## Contexto técnico (por qué importa)
+`cc-text` genera el `<h1>`–`<h6>` (según su prop `fontsize`) **dentro de su Shadow DOM**.
+Un evaluador SEO que mira el HTML (view-source) o que no atraviesa el Shadow DOM reporta
+**"No H1 tag found"** aunque visualmente el heading se vea. Eso es lo que confirmó la primera
+prueba. Estas 3 variantes comparan las salidas posibles.
 
-`cc-text` es un componente Lit. Cuando le pasas `fontsize="h2"`, genera un `<h2>` **dentro de su Shadow DOM** y proyecta tu contenido con un `<slot>`. Es decir:
+## Las 3 variantes (misma URL base, 3 archivos)
 
-- El **texto** ("This is a Title") vive en el **Light DOM** → está en el HTML plano, es indexable por cualquier crawler.
-- El **elemento `<h2>`** vive en el **Shadow DOM** → lo crea JavaScript al hidratar el componente.
+| Archivo | Estrategia | `<hN>` en view-source (sin JS) | `<hN>` con JS (Googlebot) |
+|---|---|---|---|
+| `shadow-dom.html` | **Actual** — `cc-text` genera el heading en Shadow DOM | ❌ 0 | ⚠️ existe pero dentro del shadow root (la mayoría de evaluadores NO lo cuentan) |
+| `light-dom.html` | `cc-text-lightdom` — genera el heading en **Light DOM** (`createRenderRoot() { return this }`) | ❌ 0 | ✅ el `<hN>` queda en el DOM de la página |
+| `slot-heading.html` | **Patrón IDBLab** — el `<hN>` se escribe explícito en el slot; `cc-text` solo estiliza | ✅ 6 | ✅ 6 |
 
-Esto genera dos preguntas distintas de SEO:
+Sin redundancia en la variante light-dom: escribes `<cc-text-lightdom fontsize="h2">Título</cc-text-lightdom>`
+y el componente decide el tag. En la variante slot-heading escribes el tag tú:
+`<cc-text fontsize="h2"><h2>Título</h2></cc-text>` (como hace `idb-styled-text` de la competencia).
 
-| Qué ve el crawler | Forma 1: `<cc-text>Título</cc-text>` | Forma 2: `<cc-text><h2>Título</h2></cc-text>` |
-|---|---|---|
-| **Texto del título** | ✅ en Light DOM | ✅ en Light DOM |
-| **Elemento `<h2>` semántico** | ⚠️ solo en Shadow DOM | ✅ en Light DOM |
+### Trade-offs
 
-- **Crawler sin JS (view-source):** no ejecuta el componente. En la Forma 1 solo verá `<cc-text>Título</cc-text>` — el texto sí, pero **ningún `<h2>`**. En la Forma 2 verá el `<h2>` tal cual escrito.
-- **Crawler con JS (Googlebot moderno):** ejecuta el componente y el `<h2>` existe en el DOM — **pero dentro del shadow root**. La mayoría de evaluadores SEO y `document.querySelectorAll('h2')` **no atraviesan el Shadow DOM**, así que reportan "0 h2" en la Forma 1.
+- **shadow-dom**: máxima encapsulación de estilos, peor SEO (heading escondido en el shadow).
+- **light-dom**: SEO correcto si el crawler ejecuta JS (Googlebot moderno sí); **pierde la
+  encapsulación de estilos del Shadow DOM** (los estilos del `.lit.ts` no aplican, hay que
+  depender del CSS global). No aparece en view-source puro.
+- **slot-heading (IDBLab)**: **mejor SEO** — el heading está en el HTML crudo, indexable por
+  cualquier crawler, con o sin JS. Mantiene la encapsulación de estilos (el shadow estiliza vía
+  `::slotted`). Coste: el autor debe escribir el tag semántico, que puede duplicar la intención
+  de `fontsize`.
 
-**Conclusión anticipada (a confirmar con la prueba):** si el evaluador SEO que uses cuenta headings desde el Light DOM (lo habitual), necesitarás la **Forma 2** (`<h2>` explícito en el slot) para que el heading semántico cuente. La Forma 1 garantiza el texto indexable pero no expone el nivel de heading fuera del shadow.
-
-## Contenido de este repo
+## Contenido del repo
 
 ```
 pruebaSSR/
-├─ index.html                      # La página de prueba
+├─ shadow-dom.html                 # Variante 1 (actual)
+├─ light-dom.html                  # Variante 2 (render en light DOM)
+├─ slot-heading.html               # Variante 3 (patrón IDBLab)
+├─ index.html                      # = shadow-dom.html (entrada por defecto)
 ├─ dist/
-│  ├─ ebf-components.bundle.js     # Bundle real de los componentes (cc-text incluido)
-│  └─ ebf-tailwind.min.css         # CSS global de marca (tokens @theme + utilidades globales)
+│  ├─ ebf-components.bundle.js      # Bundle real (cc-text incluido) — usado por variantes 1 y 3
+│  ├─ cc-text-lightdom.bundle.js    # Variante experimental light-DOM — usada por variante 2
+│  └─ ebf-tailwind.min.css          # CSS global de marca
 └─ README.md
 ```
 
-Ambos artefactos se generaron desde el proyecto `EBF-Website-StoryBook`:
-
+Los bundles se generaron desde `EBF-Website-StoryBook`:
 ```bash
-npm run build:bundle   # → dist/ebf-components.bundle.js (ESM, 64 componentes, ~960 KB)
-npm run build:styles   # → dist/ebf-tailwind.min.css   (CSS global, ~32 KB)
+npm run build:bundle    # → ebf-components.bundle.js (componente cc-text REAL)
+npm run build:styles    # → ebf-tailwind.min.css
+# cc-text-lightdom.bundle.js: variante experimental construida con esbuild (createRenderRoot=this).
+# El archivo fuente NO quedó en el design system; es solo para esta prueba.
 ```
 
-Son los artefactos **reales**, no una maqueta — los mismos que se usarán en Drupal.
-El CSS global se carga con `<link>` en el `<head>`; el bundle JS con `<script type="module">`.
-Nota: cada componente ya trae su propio CSS embebido en el Shadow DOM (vía su `.lit.ts`),
-así que `cc-text` se ve estilizado aunque el CSS global es necesario para las clases
-globales usadas dentro de los slots (p. ej. `text-accent-main`) y el contenido fuera del shadow.
+## Cómo probar
 
-## Qué contiene `index.html`
-
-1. **Panel de diagnóstico en vivo** — cuenta `<h1>`–`<h6>` de dos formas: solo Light DOM (lo que ve un crawler típico) vs. recorriendo también los Shadow DOM (crawler avanzado). Se ejecuta con JS ya cargado.
-2. **Sección A — el experimento**: las dos formas (slot plano vs `<h2>` explícito) lado a lado.
-3. **Sección B — todas las variaciones** de cada propiedad de `cc-text` (`fontsize` ×20, `color` ×85, `fontfamily` ×10, `weight` ×8, `align` ×5, `fontstyle` ×2, `texttransform` ×4), generadas iterando los enums reales del componente.
-
-## Cómo probar localmente
-
-Los ES modules requieren servirse por HTTP (no `file://`). Con cualquiera de estos:
-
+Servir por HTTP (los ES modules no cargan con `file://`):
 ```bash
 cd pruebaSSR
-python3 -m http.server 8080        # → http://localhost:8080
-# o
-npx serve .
+python3 -m http.server 8080
 ```
+Luego abrir `http://localhost:8080/shadow-dom.html`, `/light-dom.html`, `/slot-heading.html`.
 
-## Cómo publicar (GitHub Pages)
+## Cómo evaluar el SEO (el objetivo de la prueba)
 
-1. Crea el repo y sube estos archivos:
-   ```bash
-   cd /Users/juanpa/Git/pruebaSSR
-   git init && git add . && git commit -m "Prueba SSR/SEO cc-text"
-   git branch -M main
-   git remote add origin git@github.com:<tu-usuario>/pruebaSSR.git
-   git push -u origin main
-   ```
-2. En GitHub → **Settings → Pages** → Source: `Deploy from a branch` → Branch: `main` / `/ (root)` → Save.
-3. Tu URL será `https://<tu-usuario>.github.io/pruebaSSR/`.
+Publica el repo (GitHub Pages: Settings → Pages → branch `main` / root) y pasa **las 3 URLs**
+por el mismo evaluador SEO, comparando la sección de **Headings / H1-H6**:
 
-## Cómo ejecutar la prueba SEO (los 3 métodos que importan)
+1. **View-source (`Ctrl+U`)** — crawler sin JS. Solo `slot-heading.html` mostrará los `<hN>`.
+2. **Evaluador con JS** (Google Rich Results / Search Console URL Inspection, Ahrefs, SEMrush,
+   Screaming Frog con "JS rendering", seositecheckup, etc.):
+   - `shadow-dom.html` → probablemente "No H1 found" (heading en shadow).
+   - `light-dom.html` → debería detectar los headings (render en light DOM).
+   - `slot-heading.html` → detecta los 6 headings siempre.
 
-Una vez publicado, evalúa la **misma URL** de las 3 formas y compara:
+## Decisión esperada
 
-### 1. View-source (crawler sin JS) — el caso más estricto
-- Abre la página y haz `Ctrl+U` (ver código fuente).
-- Busca `<h2>`: **no aparecerá** para la Forma 1 (el heading lo pone JS). El **texto** de la Forma 1 sí aparece dentro de `<cc-text>`.
-- Para la Forma 2 verás el `<h2>` literal.
-- ➡️ *Si tu SEO depende de crawlers sin JS, la Forma 2 es obligatoria.*
+| Si el equipo prioriza… | Elegir |
+|---|---|
+| SEO máximo, compatible con cualquier crawler (incl. sin JS) | **slot-heading** (patrón IDBLab) |
+| Mantener `cc-text` como átomo que decide el tag, y basta con Googlebot (JS) | **light-dom** |
+| (no recomendado para headings) | shadow-dom actual |
 
-### 2. Evaluador SEO externo (Googlebot-like, con JS)
-Prueba la URL publicada en alguno de estos y mira la sección "Encabezados / Headings (H1, H2…)":
-- Google Rich Results Test / URL Inspection (Search Console) — renderiza con JS.
-- Ahrefs, SEMrush, Screaming Frog (activa "JavaScript rendering"), Sitebulb, seositecheckup.com.
-- ➡️ *La mayoría cuenta headings del Light DOM: la Forma 1 probablemente marque 0 h2, la Forma 2 los detectará.*
-
-### 3. Panel de diagnóstico de esta misma página (referencia rápida)
-- La tabla superior muestra el conteo **Light DOM** vs **Incl. Shadow DOM**.
-- Es la demostración local del mismo principio que aplicará el evaluador externo.
-
-## Cómo interpretar el resultado
-
-| Resultado observado | Qué significa | Acción en Twig |
-|---|---|---|
-| El evaluador cuenta el h2 de la **Forma 1** | Atraviesa Shadow DOM (raro) | Puedes usar slot plano |
-| El evaluador **NO** cuenta el h2 de la Forma 1 pero sí el de la **Forma 2** | Solo lee Light DOM (lo habitual) | **Usa `<h2>` explícito** dentro de `cc-text` |
-| Ningún evaluador ve el texto | (No debería pasar) | Revisar que el contenido esté slotted, no en prop |
-
-> **Hipótesis a validar:** para máxima compatibilidad SEO, escribir el heading semántico explícito en el slot:
-> ```html
-> <cc-text fontsize="h2" color="graphite-deep-main"><h2>{{ title }}</h2></cc-text>
-> ```
-> El `cc-text` seguiría aplicando estilos vía `::slotted`, y el `<h2>` quedaría en el Light DOM (indexable por todos).
-> Confirma con los 3 métodos de arriba antes de decidir la convención definitiva.
+> Recomendación de partida: **slot-heading** replica exactamente lo que hace la competencia
+> (`idb-styled-text`) y es el único que garantiza el heading en el HTML crudo. Confirma con el
+> evaluador real sobre las 3 URLs antes de cambiar el design system.
